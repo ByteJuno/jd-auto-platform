@@ -1,0 +1,16 @@
+* text=auto
+
+# Linux 侧直接执行的脚本必须是 LF，否则 bash 报 $'\r': command not found
+*.sh   text eol=lf
+*.py   text eol=lf
+*.js   text eol=lf
+*.yml  text eol=lf
+
+# Windows 侧脚本保持 CRLF
+*.ps1  text eol=crlf
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+
+*.png  binary
+*.gz   binary
+*.tar  binary

@@ -1,0 +1,27 @@
+# 密钥/凭据
+.env
+.env.*
+!.env.example
+ck.txt
+ck*.txt
+!ck.txt.example
+*.pem
+*.key
+
+# 运行数据
+data/
+logs/
+ql-data/
+ck_sessions/
+*.log
+*.json
+
+# 构建产物
+dist/
+__pycache__/
+*.pyc
+node_modules/
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
