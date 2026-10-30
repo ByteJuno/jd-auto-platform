@@ -65,6 +65,7 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
            '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 let version = 0;
+let verifyMode = false;   // 撞到 aq.jd.com 账号认证页
 
 function writeStatus(state, msg = '') {
   const tmp = path.join(DIR, '.status.json.tmp');
@@ -73,6 +74,48 @@ function writeStatus(state, msg = '') {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---- 诊断：把扫码链路上的关键请求/跳转/响应记到 net.log ----
+const NETLOG = path.join(DIR, 'net.log');
+function nlog(...a) {
+  try { fs.appendFileSync(NETLOG, new Date().toISOString() + ' ' + a.join(' ') + '\n'); } catch (_) {}
+}
+function watchPage(page) {
+  page.on('framenavigated', (f) => {
+    if (f !== page.mainFrame()) return;
+    const u = f.url();
+    nlog('NAV', u.slice(0, 160));
+    // 扫码确认后，京东可能不直接发 pt_key，而是跳「账号安全认证」，要短信/身份验证
+    if (/aq\.jd\.com|certified\/index|safe\.jd\.com|verify/.test(u) && /jd\.com/.test(u)) {
+      if (!verifyMode) {
+        verifyMode = true;
+        nlog('NEED_VERIFY', u.slice(0, 160));
+      }
+    }
+  });
+  page.on('response', async (r) => {
+    const u = r.url();
+    if (!/jd\.com/.test(u)) return;
+    if (!/\/check\?|TicketValidation|qrlogin|login\.action|uc\/login/.test(u)) return;
+    let body = '';
+    try { body = (await r.text()).slice(0, 240).replace(/\s+/g, ' '); } catch (_) {}
+    nlog('RESP', r.status(), u.slice(0, 110), '|', body);
+  });
+  page.on('pageerror', (e) => nlog('PAGEERR', String(e.message).slice(0, 120)));
+}
+async function dumpCookies(pages, tag) {
+  for (const p of pages.slice().reverse()) {
+    if (!p || p.isClosed()) continue;
+    try {
+      const cs = await p.cookies(
+        'https://www.jd.com', 'https://passport.jd.com', 'https://home.m.jd.com');
+      const names = cs.map((c) => c.name + '@' + c.domain).join(',') || '(none)';
+      let doc = '';
+      try { doc = await p.evaluate(() => document.cookie.slice(0, 200)); } catch (_) {}
+      nlog('COOKIES', 'v' + tag, 'n=' + cs.length, names.slice(0, 300), '| doc:', doc || '');
+    } catch (_) {}
+  }
+}
 
 async function grabQr(page) {
   await page.waitForSelector(QR_SEL, { timeout: 25000 });
@@ -135,10 +178,42 @@ async function validCk(browser, ck) {
   }
 }
 
+// 认证页的 DOM 没法预先准确知道，用「找第一个能输入的框 + 全选粘贴 + 回车/点提交」兜住
+async function submitVerify(page, code) {
+  await page.bringToFront();
+  const typed = await page.evaluate((c) => {
+    const ins = [...document.querySelectorAll('input')].filter((i) => {
+      const r = i.getBoundingClientRect();
+      return r.width > 10 && r.height > 10 && !i.disabled && i.type !== 'hidden';
+    });
+    if (!ins.length) return false;
+    const el = ins[0];
+    el.focus();
+    el.value = c;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }, code);
+  if (!typed) throw new Error('认证页上找不到输入框');
+  await sleep(300);
+  const clicked = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll('button, a, div, span')].filter((b) => {
+      const r = b.getBoundingClientRect();
+      const txt = (b.innerText || '').trim();
+      return r.width > 20 && /提交|下一步|确定|验证|确认/.test(txt) && txt.length < 12;
+    });
+    if (btns.length) { btns[0].click(); return true; }
+    return false;
+  });
+  if (!clicked) await page.keyboard.press('Enter');
+  await sleep(1500);
+}
+
 async function openLoginPage(browser) {
   const page = await browser.newPage();
   await page.setUserAgent(UA);
   await page.setViewport({ width: 460, height: 820 });
+  watchPage(page);
   try {
     await page.goto(LOGIN_URL, { waitUntil: 'networkidle2', timeout: 45000 });
   } catch (e) {
@@ -198,6 +273,7 @@ async function openLoginPageRetry(browser, tries = 3) {
 
     const deadline = Date.now() + TOTAL_MS;
     let sliceEnd = Math.min(Date.now() + SLICE_MS, deadline);
+    let lastDump = 0;
 
     while (Date.now() < deadline) {
       const ck = await readCk(pages);
@@ -207,10 +283,41 @@ async function openLoginPageRetry(browser, tries = 3) {
         return;
       }
 
+      if (Date.now() - lastDump > 5000) { await dumpCookies(pages, version); lastDump = Date.now(); }
+
       // 页面会告诉你“扫描成功，请在手机上确认”，把它透到面板上
-      const t = await pageText(pages[pages.length - 1]);
+      const newest = pages[pages.length - 1];
+      const t = await pageText(newest);
       if (/扫描成功|请在手机|已扫码/.test(t)) {
         writeStatus('qr', '已扫码，请在手机上点「确认登录」');
+      }
+
+      if (verifyMode) {
+        // 把认证页整页截下来给面板看，用户填短信码，我们代填
+        let shot = false;
+        try {
+          const buf = await newest.screenshot({ fullPage: false });
+          const tmp = path.join(DIR, '.verify.tmp.png');
+          fs.writeFileSync(tmp, buf);
+          fs.renameSync(tmp, path.join(DIR, 'verify.png'));
+          shot = true;
+        } catch (_) {}
+        const codeFile = path.join(DIR, 'code.txt');
+        let msg = '京东要求账号安全认证（这个设备是新设备）';
+        if (fs.existsSync(codeFile)) {
+          const code = (fs.readFileSync(codeFile, 'utf8') || '').trim();
+          fs.unlinkSync(codeFile);
+          if (code) {
+            nlog('SUBMIT_CODE', code.length + '位');
+            try {
+              await submitVerify(newest, code);
+              msg = '已提交验证码，等京东放行…';
+            } catch (e) {
+              msg = '提交验证码失败：' + String(e.message || e).slice(0, 60);
+            }
+          }
+        }
+        writeStatus('need_verify', msg + (shot ? '' : '（截图失败，可直接在面板填验证码）'));
       }
 
       if (Date.now() >= sliceEnd) {

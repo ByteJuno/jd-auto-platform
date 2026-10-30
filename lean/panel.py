@@ -322,6 +322,15 @@ textarea{width:100%;height:110px;background:var(--code-bg);color:var(--code-txt)
      二维码约 2 分钟失效，这里会自动换新码，不用关掉重开。</p>
   <img id="qrimg" alt="二维码加载中">
   <div id="ckMsg" class="muted">正在拉起浏览器…</div>
+  <div id="verifyBox" style="display:none;margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+    <div class="muted" style="margin-bottom:6px">京东要求账号安全认证（新设备必走一次）。下面就是京东那个页面，验证码会发到你手机上，填完点提交，之后这台浏览器就被信任了。</div>
+    <img id="vimg" alt="认证页加载中" style="max-width:100%;border:1px solid var(--line);border-radius:8px;background:#fff">
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <input id="vcode" placeholder="短信验证码" style="flex:1;background:var(--code-bg);color:var(--code-txt);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:13px ui-monospace,Consolas,monospace">
+      <button onclick="sendCode()">提交</button>
+    </div>
+    <div id="vmsg" class="muted" style="margin-top:6px"></div>
+  </div>
   <details style="margin-top:12px">
     <summary class="muted" style="cursor:pointer">扫不出来？手动粘贴 cookie</summary>
     <textarea id="ckPaste" placeholder="pt_key=AAJ...;pt_pin=jd_xxx;   （从浏览器 F12 → Application → Cookies → jd.com 复制）"></textarea>
@@ -403,6 +412,16 @@ async function pollCk(){
   const d = await r.json();
   const msg = document.getElementById('ckMsg');
   const img = document.getElementById('qrimg');
+  if(d.state === 'need_verify'){
+    document.getElementById('verifyBox').style.display = 'block';
+    const vi = document.getElementById('vimg');
+    vi.src = '/api/ck/verify?sid='+sid+'&t='+Date.now();
+    msg.innerHTML = '<span class="bad">'+esc(d.msg||'需要安全认证')+'</span>';
+    ckTimer = setTimeout(pollCk, 3000);
+    return;
+  } else {
+    document.getElementById('verifyBox').style.display = 'none';
+  }
   if(d.state === 'qr'){
     const v = String(d.v || 0);
     if(img.dataset.v !== v){                 // 只有换新码时才重新拉图，避免每 1.5 秒重下一遍
@@ -422,6 +441,15 @@ async function pollCk(){
     msg.textContent = '正在拉起浏览器…';
   }
   ckTimer = setTimeout(pollCk, 1500);
+}
+
+async function sendCode(){
+  const code = document.getElementById('vcode').value.trim();
+  if(!code){ return; }
+  const r = await fetch('/api/ck/code?sid='+sid+'&code='+encodeURIComponent(code), {method:'POST'});
+  const d = await r.json();
+  document.getElementById('vmsg').textContent = d.msg || (d.ok ? '已提交' : '提交失败');
+  if(d.ok){ document.getElementById('vcode').value=''; clearTimeout(ckTimer); ckTimer = setTimeout(pollCk, 1500); }
 }
 
 async function savePaste(){
@@ -499,6 +527,16 @@ class H(BaseHTTPRequestHandler):
                     return self._send(200, f.read(), "image/png")
             except FileNotFoundError:
                 return self._send(404, "qr not ready", "text/plain")
+        if u.path == "/api/ck/verify":
+            sid = q.get("sid", [""])[0]
+            if not re.fullmatch(r"[0-9a-f]{6,32}", sid or ""):
+                return self._send(400, "bad sid", "text/plain")
+            path = os.path.join(SESS_ROOT, sid, "verify.png")
+            try:
+                with open(path, "rb") as f:
+                    return self._send(200, f.read(), "image/png")
+            except FileNotFoundError:
+                return self._send(404, "verify not ready", "text/plain")
         if u.path == "/api/ck/status":
             sid = q.get("sid", [""])[0]
             if not re.fullmatch(r"[0-9a-f]{6,32}", sid or ""):
@@ -522,6 +560,19 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/api/ck/start":
             try:
                 return self._send(200, json.dumps({"ok": True, "sid": start_qr()}))
+            except Exception as e:
+                return self._send(500, json.dumps({"ok": False, "msg": str(e)}, ensure_ascii=False))
+        if u.path == "/api/ck/code":
+            qs = parse_qs(u.query)
+            sid = qs.get("sid", [""])[0]
+            code = qs.get("code", [""])[0].strip()
+            if not re.fullmatch(r"[0-9a-f]{6,32}", sid or "") or not code:
+                return self._send(400, json.dumps({"ok": False, "msg": "参数不对"}, ensure_ascii=False))
+            try:
+                with open(os.path.join(SESS_ROOT, sid, "code.txt"), "w") as f:
+                    f.write(code)
+                return self._send(200, json.dumps(
+                    {"ok": True, "msg": "已提交，等京东放行"}, ensure_ascii=False))
             except Exception as e:
                 return self._send(500, json.dumps({"ok": False, "msg": str(e)}, ensure_ascii=False))
         if u.path == "/api/ck/manual":

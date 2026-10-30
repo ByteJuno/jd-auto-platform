@@ -536,3 +536,34 @@ PY
 - 换码 100 秒一次（京东码约 2 分钟有效），两张同时在手，等于给用户 200 秒的窗口；
 - 家宽 DNS 会抖（实测出现过一次 ERR_NAME_NOT_RESOLVED），换码失败重试 3 次，
   还失败就继续用手里那张、30 秒后再试，绝不因为一次网络抖动把整场会话打死。
+### 10.8 撞到京东"账号安全认证"（aq.jd.com）怎么办
+
+真机跑出来的完整链路（
+et.log）：
+
+`
+check → {"code":202,"msg":"请手机客户端确认登录"}
+check → {"code":200,"ticket":"AAEAMGiijKhno8g0lNpgtZhes..."}
+/uc/qrCodeTicketValidation?...          响应体为空（没有 Set-Cookie）
+NAV  passport.jd.com/relay/loginRelay?rurl=//aq.jd.com/certified/index?...
+NAV  https://aq.jd.com/certified/index?p=...&o=LOGIN&s=pc_main&i=...
+`
+
+结论：**票拿到了，但换 pt_key 这一步被风控拦去"账号认证"**。这是新设备登录的保护，不是代码 bug，
+所以 cookie 库里始终没有 pt_key——手机显示"登录成功"也没错，服务端确实接受了扫码。
+
+处理方式（面板已内置）：
+
+1. ck_qr.js 一旦监测到跳转 q.jd.com / certified/index，就切到 
+eed_verify 状态，
+   把认证页整页截图存成 erify.png；
+2. 面板此时会显示京东那个认证页 + 一个验证码输入框；
+3. 手机上会收到短信，填进面板点「提交」→ 面板写 code.txt → ck_qr.js 代你填进页面并提交；
+4. 认证通过后 pt_key 落地，**这台浏览器 profile 被记成可信设备**，以后同一 profile 扫码不再走认证。
+
+关于"续期"，把话说清楚：
+
+- pt_key 有滑动过期——只要还在用（每天 07:30 的 jd_CheckCK 就会带着它访问一次），
+  服务端会顺延，不存在"每天要重新扫码"这回事；
+- 真的失效，基本是被踢（异地登录、多设备、风控），这时才需要重新取一次；
+- 重新取一次的最短路径就是这个「扫码 + 填一次短信码」，或者手动粘 cookie 兜底。
