@@ -239,12 +239,23 @@ def qr_status(sid):
 # ---------------------------------------------------------------- 页面
 
 PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta name="color-scheme" content="dark light">
 <title>JD 任务看板</title><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-:root{--bg:#0f1115;--card:#171a21;--line:#2a2f3a;--txt:#e6e9ef;--dim:#8b93a7;
-      --ok:#3ddc97;--bad:#ff5d5d;--acc:#5b9dff}
+/* 深色是默认，浅色跟随系统（prefers-color-scheme）。所有颜色都走变量。 */
+:root{color-scheme:dark light;
+      --bg:#0f1115;--card:#171a21;--line:#2a2f3a;--txt:#e6e9ef;--dim:#8b93a7;
+      --ok:#3ddc97;--bad:#ff5d5d;--acc:#5b9dff;
+      --btn:#232936;--code-bg:#0b0d11;--code-txt:#c9d1e0;--backdrop:#000a;--qrbg:#fff}
+@media (prefers-color-scheme:light){
+  :root{--bg:#f5f6f8;--card:#ffffff;--line:#e1e5ec;--txt:#1b2129;--dim:#5d6674;
+        --ok:#0e8f5b;--bad:#d22f2f;--acc:#1f6feb;
+        --btn:#eef1f6;--code-bg:#f4f6f9;--code-txt:#242c37;--backdrop:#0003;--qrbg:#fff}
+}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 -apple-system,"Segoe UI",Roboto,"Noto Sans SC",sans-serif}
+body{margin:0;background:var(--bg);color:var(--txt);
+     font:14px/1.5 -apple-system,"Segoe UI",Roboto,"Noto Sans SC",sans-serif;
+     -webkit-font-smoothing:antialiased}
 header{display:flex;align-items:center;gap:12px;padding:16px 22px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 h1{font-size:16px;margin:0;font-weight:600}
 .pill{font-size:12px;color:var(--dim);border:1px solid var(--line);border-radius:99px;padding:2px 10px}
@@ -256,19 +267,19 @@ th{font-size:12px;color:var(--dim);font-weight:500;letter-spacing:.5px}
 tr:last-child td{border-bottom:none}
 td.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--dim)}
 .ok{color:var(--ok)}.bad{color:var(--bad)}
-button{background:#232936;color:var(--txt);border:1px solid var(--line);border-radius:7px;
+button{background:var(--btn);color:var(--txt);border:1px solid var(--line);border-radius:7px;
        padding:6px 12px;cursor:pointer;font-size:13px;font-family:inherit}
 button:hover{border-color:var(--acc);color:var(--acc)}
 button:disabled{opacity:.45;cursor:default}
-pre{background:#0b0d11;border:1px solid var(--line);border-radius:10px;padding:14px;
-    max-height:52vh;overflow:auto;font:12px/1.55 ui-monospace,Consolas,monospace;color:#c9d1e0;white-space:pre-wrap}
+pre{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:14px;
+    max-height:52vh;overflow:auto;font:12px/1.55 ui-monospace,Consolas,monospace;color:var(--code-txt);white-space:pre-wrap}
 dialog{background:var(--card);color:var(--txt);border:1px solid var(--line);border-radius:12px;
        width:min(560px,94vw);padding:18px}
-dialog::backdrop{background:#000a}
+dialog::backdrop{background:var(--backdrop)}
 .row{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px}
 .muted{color:var(--dim);font-size:12px}
-#qrimg{width:180px;height:180px;background:#fff;border-radius:8px;image-rendering:pixelated;display:block;margin:10px auto}
-textarea{width:100%;height:110px;background:#0b0d11;color:#c9d1e0;border:1px solid var(--line);
+#qrimg{width:180px;height:180px;background:var(--qrbg);border-radius:8px;image-rendering:pixelated;display:block;margin:10px auto}
+textarea{width:100%;height:110px;background:var(--code-bg);color:var(--code-txt);border:1px solid var(--line);
          border-radius:8px;padding:10px;font:12px/1.5 ui-monospace,Consolas,monospace;resize:vertical}
 #ckMsg{text-align:center;font-size:13px;margin-top:6px}
 </style></head><body>
