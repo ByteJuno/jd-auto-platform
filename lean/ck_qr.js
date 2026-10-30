@@ -202,14 +202,39 @@ async function collectClickables(page) {
   } catch (_) { return { labels: [] }; }
 }
 
+// 京东这类页面常常不认 el.click()（监听的是真实鼠标/触摸事件），
+// 所以先用 CDP 在元素中心发真实鼠标事件，再补一套 pointer/mouse 事件兜底。
 async function clickIdx(page, idx) {
-  return await page.evaluate((n) => {
+  const box = await page.evaluate((n) => {
     const el = document.querySelector('[data-jdcli="' + n + '"]');
-    if (!el) return false;
+    if (!el) return null;
     el.scrollIntoView({ block: 'center' });
-    el.click();
-    return true;
+    const r = el.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height };
   }, idx);
+  if (!box) return false;
+
+  // 1) 真实鼠标点击
+  try {
+    await page.mouse.move(box.x, box.y, { steps: 4 });
+    await sleep(80);
+    await page.mouse.click(box.x, box.y, { delay: 60 });
+  } catch (_) {}
+
+  // 2) 再补一套合成事件（含 pointer，有些前端只监听 pointerdown）
+  try {
+    await page.evaluate((n) => {
+      const el = document.querySelector('[data-jdcli="' + n + '"]');
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const opt = { bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 };
+      ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click'].forEach((t) => {
+        const Ev = t.startsWith('pointer') ? (window.PointerEvent || MouseEvent) : MouseEvent;
+        el.dispatchEvent(new Ev(t, opt));
+      });
+    }, idx);
+  } catch (_) {}
+  return true;
 }
 
 // 认证页的 DOM 没法预先准确知道，用「找第一个能输入的框 + 全选粘贴 + 回车/点提交」兜住
