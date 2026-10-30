@@ -153,7 +153,7 @@ if ! grep -q '^PANEL_PASS=' "$APP_DIR/.env" 2>/dev/null; then
   {
     echo "PANEL_USER=admin"
     echo "PANEL_PASS=$PW"
-    echo "PANEL_PORT=8088"
+    echo "PANEL_PORT=${PANEL_PORT:-8088}"
     echo "PANEL_BIND=${PANEL_BIND:-}"
   } >> "$APP_DIR/.env"
   ok "面板密码已生成，写在 $APP_DIR/.env 的 PANEL_PASS"
