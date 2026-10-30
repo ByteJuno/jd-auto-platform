@@ -167,6 +167,7 @@ if [ -z "$BIND_VAL" ]; then
   [ -z "$BIND_VAL" ] && BIND_VAL=$(hostname -I | awk '{print $1}')
   sed -i "s|^PANEL_BIND=.*|PANEL_BIND=$BIND_VAL|" "$APP_DIR/.env"
 fi
+PORT_VAL=$(grep '^PANEL_PORT=' "$APP_DIR/.env" | cut -d= -f2-)
 
 # 面板只能通过 sudo 起/停自己的这几个单元
 cat > /etc/sudoers.d/jd-panel <<EOF
@@ -204,7 +205,7 @@ cat <<EOF
 
 ==================== 装完了（无青龙版）====================
 目录     $APP_DIR
-看板     http://$BIND_VAL:8088   账号 admin / 密码见 .env 的 PANEL_PASS
+看板     http://$BIND_VAL:$PORT_VAL   账号 admin / 密码见 .env 的 PANEL_PASS
 脚本     $APP_DIR/scripts/$REPO_DIR
 日志     $APP_DIR/logs/<脚本名>-<日期>.log
 账号     进看板点「添加账号（扫码）」，手机京东 APP 扫一下；扫不动就手动粘 cookie
