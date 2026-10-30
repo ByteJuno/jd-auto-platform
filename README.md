@@ -425,6 +425,25 @@ OnCalendar=*-*-* 07:30:00 Asia/Shanghai
 结论：**这台适合当"开发/验证机"，要长期挂主号，搬回家里那台**。搬家成本很低——`lean/install.sh`
 是幂等的，把 `dist/jd-lean.tar.gz` 拷过去 `sudo APP_DIR=/opt/jd-cron bash install.sh` 就行，
 `.env` 拷走即可（CK 和面板密码都在里面）。
+---
 
+## 12. 现役部署（家用 Debian 机器）
 
+云上那台（AWS us-west-2）验证完就停掉了，跑京东要用住宅 IP。现在的部署形态：
 
+| 项 | 值 |
+|---|---|
+| 宿主 | Debian 13 (trixie) / 6.12 内核 / 62G 系统盘 / 时区本身就是 Asia/Shanghai |
+| 目录 | `/opt/jd-cron`（scripts、logs、tools、ck_sessions、.env） |
+| 看板 | `http://<内网IP>:8089`（8088 被别的服务占了，所以换了端口） |
+| 服务 | `jd-panel.service` + 5 个 `jd-*.timer` |
+| 依赖 | apt 装 `nodejs(npm 9)`、`chromium 156`；npm 装 `axios/ws/png-js/moment/dotenv/crypto-js/date-fns/jsdom/undici/got@11` + `puppeteer-core` |
+
+从公网仓库直接装（不用拷文件）：
+
+```bash
+git clone --depth 1 https://github.com/ByteJuno/jd-auto-platform.git /tmp/jdrepo
+sudo APP_DIR=/opt/jd-cron OWNER=$USER PANEL_BIND=<内网IP> PANEL_PORT=8089 bash /tmp/jdrepo/lean/install.sh
+```
+
+坑：`PANEL_PORT` 以前写死 8088，和已有服务撞端口，已改成可用环境变量覆盖（commit `d0a5844`）。
