@@ -324,6 +324,7 @@ textarea{width:100%;height:110px;background:var(--code-bg);color:var(--code-txt)
   <div id="ckMsg" class="muted">正在拉起浏览器…</div>
   <div id="verifyBox" style="display:none;margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
     <div class="muted" style="margin-bottom:6px">京东要求账号安全认证（新设备必走一次）。下面就是京东那个页面，验证码会发到你手机上，填完点提交，之后这台浏览器就被信任了。</div>
+    <div id="vbtns" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0"></div>
     <img id="vimg" alt="认证页加载中" style="max-width:100%;border:1px solid var(--line);border-radius:8px;background:#fff">
     <div style="display:flex;gap:8px;margin-top:8px">
       <input id="vcode" placeholder="短信验证码" style="flex:1;background:var(--code-bg);color:var(--code-txt);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:13px ui-monospace,Consolas,monospace">
@@ -416,6 +417,7 @@ async function pollCk(){
     document.getElementById('verifyBox').style.display = 'block';
     const vi = document.getElementById('vimg');
     vi.src = '/api/ck/verify?sid='+sid+'&t='+Date.now();
+    await loadVerifyButtons();
     msg.innerHTML = '<span class="bad">'+esc(d.msg||'需要安全认证')+'</span>';
     ckTimer = setTimeout(pollCk, 3000);
     return;
@@ -441,6 +443,31 @@ async function pollCk(){
     msg.textContent = '正在拉起浏览器…';
   }
   ckTimer = setTimeout(pollCk, 1500);
+}
+
+let vbtnsKey = '';
+async function loadVerifyButtons(){
+  const r = await fetch('/api/ck/verifyjson?sid='+sid);
+  const d = await r.json();
+  const box = document.getElementById('vbtns');
+  const key = JSON.stringify((d.labels||[]).map(x=>x.text));
+  if(key === vbtnsKey) return;            // 没变就别重绘，免得点一半被刷掉
+  vbtnsKey = key;
+  box.innerHTML = '';
+  (d.labels||[]).forEach(it => {
+    const b = document.createElement('button');
+    b.textContent = it.text;
+    b.onclick = () => clickPage(it.i);
+    box.appendChild(b);
+  });
+}
+
+async function clickPage(i){
+  const r = await fetch('/api/ck/click?sid='+sid+'&idx='+i, {method:'POST'});
+  const d = await r.json();
+  document.getElementById('vmsg').textContent = d.msg || '已点击';
+  vbtnsKey = '';
+  clearTimeout(ckTimer); ckTimer = setTimeout(pollCk, 1200);
 }
 
 async function sendCode(){
@@ -537,6 +564,15 @@ class H(BaseHTTPRequestHandler):
                     return self._send(200, f.read(), "image/png")
             except FileNotFoundError:
                 return self._send(404, "verify not ready", "text/plain")
+        if u.path == "/api/ck/verifyjson":
+            sid = q.get("sid", [""])[0]
+            if not re.fullmatch(r"[0-9a-f]{6,32}", sid or ""):
+                return self._send(400, "{}", "application/json")
+            try:
+                with open(os.path.join(SESS_ROOT, sid, "verify.json"), encoding="utf-8") as f:
+                    return self._send(200, f.read(), "application/json; charset=utf-8")
+            except FileNotFoundError:
+                return self._send(200, json.dumps({"labels": []}), "application/json")
         if u.path == "/api/ck/status":
             sid = q.get("sid", [""])[0]
             if not re.fullmatch(r"[0-9a-f]{6,32}", sid or ""):
@@ -560,6 +596,18 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/api/ck/start":
             try:
                 return self._send(200, json.dumps({"ok": True, "sid": start_qr()}))
+            except Exception as e:
+                return self._send(500, json.dumps({"ok": False, "msg": str(e)}, ensure_ascii=False))
+        if u.path == "/api/ck/click":
+            qs = parse_qs(u.query)
+            sid = qs.get("sid", [""])[0]
+            idx = qs.get("idx", [""])[0]
+            if not re.fullmatch(r"[0-9a-f]{6,32}", sid or "") or not idx.isdigit():
+                return self._send(400, json.dumps({"ok": False, "msg": "参数不对"}, ensure_ascii=False))
+            try:
+                with open(os.path.join(SESS_ROOT, sid, "click.txt"), "w") as f:
+                    f.write(idx)
+                return self._send(200, json.dumps({"ok": True, "msg": "已点击"}, ensure_ascii=False))
             except Exception as e:
                 return self._send(500, json.dumps({"ok": False, "msg": str(e)}, ensure_ascii=False))
         if u.path == "/api/ck/code":

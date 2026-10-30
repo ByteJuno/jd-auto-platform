@@ -178,6 +178,40 @@ async function validCk(browser, ck) {
   }
 }
 
+// 认证页结构没法预先知道，就把「能点的东西」全标上 data-jdcli 索引甩给面板，
+// 让用户在面板上直接点（默认选中的可能不是短信验证，必须能手动切）
+async function collectClickables(page) {
+  try {
+    return await page.evaluate(() => {
+      const out = [];
+      const sel = 'a,button,input[type=button],input[type=submit],[role=button],div,span,label,li';
+      let i = 0;
+      for (const el of document.querySelectorAll(sel)) {
+        const r = el.getBoundingClientRect();
+        if (r.width < 18 || r.height < 12) continue;
+        const txt = (el.innerText || el.value || '').trim().replace(/\s+/g, ' ');
+        if (!txt || txt.length > 22) continue;
+        if (out.some((o) => o.text === txt)) continue;
+        el.setAttribute('data-jdcli', String(i));
+        out.push({ i, text: txt });
+        i += 1;
+        if (out.length >= 12) break;
+      }
+      return { labels: out, url: location.href.slice(0, 120) };
+    });
+  } catch (_) { return { labels: [] }; }
+}
+
+async function clickIdx(page, idx) {
+  return await page.evaluate((n) => {
+    const el = document.querySelector('[data-jdcli="' + n + '"]');
+    if (!el) return false;
+    el.scrollIntoView({ block: 'center' });
+    el.click();
+    return true;
+  }, idx);
+}
+
 // 认证页的 DOM 没法预先准确知道，用「找第一个能输入的框 + 全选粘贴 + 回车/点提交」兜住
 async function submitVerify(page, code) {
   await page.bringToFront();
@@ -302,6 +336,24 @@ async function openLoginPageRetry(browser, tries = 3) {
           fs.renameSync(tmp, path.join(DIR, 'verify.png'));
           shot = true;
         } catch (_) {}
+        // 把页面上能点的东西甩给面板，用户点哪个我们就点哪个
+        const info = await collectClickables(newest);
+        try {
+          fs.writeFileSync(path.join(DIR, 'verify.json'),
+            JSON.stringify({ ...info, ts: Date.now() }));
+        } catch (_) {}
+
+        const clickFile = path.join(DIR, 'click.txt');
+        if (fs.existsSync(clickFile)) {
+          const idx = parseInt((fs.readFileSync(clickFile, 'utf8') || '').trim(), 10);
+          fs.unlinkSync(clickFile);
+          if (!Number.isNaN(idx)) {
+            const hit = await clickIdx(newest, idx);
+            nlog('CLICK', idx, hit ? 'ok' : 'miss');
+            await sleep(1200);
+          }
+        }
+
         const codeFile = path.join(DIR, 'code.txt');
         let msg = '京东要求账号安全认证（这个设备是新设备）';
         if (fs.existsSync(codeFile)) {
