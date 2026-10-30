@@ -447,3 +447,31 @@ sudo APP_DIR=/opt/jd-cron OWNER=$USER PANEL_BIND=<内网IP> PANEL_PORT=8089 bash
 ```
 
 坑：`PANEL_PORT` 以前写死 8088，和已有服务撞端口，已改成可用环境变量覆盖（commit `d0a5844`）。
+---
+
+## 13. 看板配色：跟随系统
+
+深色是默认，浅色跟随浏览器/系统的 `prefers-color-scheme`，不留硬编码颜色——所有颜色都收在 CSS 变量里，
+浅色只是覆盖一组变量：
+
+```css
+:root{color-scheme:dark light;--bg:#0f1115;--card:#171a21;--txt:#e6e9ef;...}
+@media (prefers-color-scheme:light){
+  :root{--bg:#f5f6f8;--card:#fff;--txt:#1b2129;...}
+}
+```
+
+几点值得记的：
+
+- `<meta name="color-scheme" content="dark light">` + CSS `color-scheme` 一起写，浏览器原生控件
+  （滚动条、textarea 调整柄、`dialog` 背板）才会一起变色，否则浅色下滚动条还是黑的。
+- 二维码区域用独立的 `--qrbg`，**永远是白底**——二维码反色之后手机扫不出来。
+- 无头 chromium 截自己的面板截图前记得 `apt install fonts-noto-cjk`，否则中文全是豆腐块（只影响截图，不影响功能）。
+
+深色：
+
+![看板深色](docs/panel-dark.png)
+
+浅色：
+
+![看板浅色](docs/panel-light.png)
