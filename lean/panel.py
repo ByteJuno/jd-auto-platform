@@ -198,12 +198,22 @@ _active = {}   # sid -> 起始时间戳，避免用户连点造成多次登录
 
 def start_qr():
     now = time.time()
-    # 已经有一个在等扫的会话，就复用它，别连扫（连扫最容易触发登录保护）
-    for sid, t0 in list(_active.items()):
-        if now - t0 < 200:
+    # 已经有一个还在等扫的会话就复用它，别连扫（连扫最容易触发登录保护）。
+    # 判断依据是它自己的状态：还活着（starting/qr）且刚更新过，才复用。
+    for sid in list(_active):
+        st = qr_status(sid)
+        age = now - (st.get("ts", 0) / 1000.0 if st.get("ts") else now)
+        if st.get("state") in ("starting", "qr") and age < 15:
             return sid
         _active.pop(sid, None)
     os.makedirs(SESS_ROOT, exist_ok=True)
+    # 上一个会话可能卡死（浏览器 profile 被占着），先清干净再起新的
+    subprocess.run(["pkill", "-f", "tools/ck_qr.js"], check=False,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        os.unlink(os.path.join(SESS_ROOT, ".ck_qr.lock"))
+    except OSError:
+        pass
     sid = uuid.uuid4().hex[:12]
     d = os.path.join(SESS_ROOT, sid)
     os.makedirs(d, exist_ok=True)
@@ -308,7 +318,8 @@ textarea{width:100%;height:110px;background:var(--code-bg);color:var(--code-txt)
 
 <dialog id="ckdlg">
   <div class="row"><b>扫码添加京东账号</b><button onclick="closeCk()">关闭</button></div>
-  <p class="muted" style="margin:0 0 6px">手机京东 APP → 左上角「扫一扫」→ 确认登录。扫完自动写入，不碰你的密码。</p>
+  <p class="muted" style="margin:0 0 6px">手机京东 APP → 左上角「扫一扫」→ 确认登录。扫完自动写入，不碰你的密码。<br>
+     二维码约 2 分钟失效，这里会自动换新码，不用关掉重开。</p>
   <img id="qrimg" alt="二维码加载中">
   <div id="ckMsg" class="muted">正在拉起浏览器…</div>
   <details style="margin-top:12px">
@@ -384,24 +395,33 @@ async function openCk(){
 
 function closeCk(){ clearTimeout(ckTimer); ckdlg.close(); refresh(); }
 
+const QR_REFRESH_MS = 70000;   // 和服务端 QR_REFRESH_SECONDS 默认值保持一致
+
 async function pollCk(){
   if(!sid) return;
   const r = await fetch('/api/ck/status?sid='+sid);
   const d = await r.json();
   const msg = document.getElementById('ckMsg');
+  const img = document.getElementById('qrimg');
   if(d.state === 'qr'){
-    document.getElementById('qrimg').src = '/api/ck/qr?sid='+sid+'&t='+Date.now();
-    msg.innerHTML = '<span class="ok">等扫码…</span>（二维码 3 分钟有效）';
+    const v = String(d.v || 0);
+    if(img.dataset.v !== v){                 // 只有换新码时才重新拉图，避免每 1.5 秒重下一遍
+      img.dataset.v = v;
+      img.src = '/api/ck/qr?sid='+sid+'&v='+v+'&t='+Date.now();
+    }
+    const left = d.ts ? Math.max(0, Math.round((d.ts + QR_REFRESH_MS - Date.now())/1000)) : 0;
+    msg.innerHTML = '<span class="ok">第 '+esc(v)+' 张，等扫码…</span>（约 '+left+' 秒后自动换新码）';
   } else if(d.state === 'ok'){
-    msg.innerHTML = '<span class="ok">'+esc(d.msg)+'</span>';
+    msg.innerHTML = '<span class="ok">'+esc(d.msg||'已写入')+'</span>';
     refresh(); return;
   } else if(d.state === 'expired' || d.state === 'error'){
-    msg.innerHTML = '<span class="bad">'+(d.state==='expired'?'二维码过期了，重开一次':'出错了：'+esc(d.msg||''))+'</span>';
+    msg.innerHTML = '<span class="bad">'+(d.state==='expired'?'这张超时了':'出错了：'+esc(d.msg||''))+
+                    '</span> <button onclick="openCk()">换一张</button>';
     return;
   } else {
     msg.textContent = '正在拉起浏览器…';
   }
-  ckTimer = setTimeout(pollCk, 2000);
+  ckTimer = setTimeout(pollCk, 1500);
 }
 
 async function savePaste(){
@@ -483,7 +503,11 @@ class H(BaseHTTPRequestHandler):
             sid = q.get("sid", [""])[0]
             if not re.fullmatch(r"[0-9a-f]{6,32}", sid or ""):
                 return self._send(400, json.dumps({"state": "error", "msg": "bad sid"}))
-            return self._send(200, json.dumps(qr_status(sid), ensure_ascii=False))
+            st = qr_status(sid)
+            # 会话结束了就把它从复用表里摘掉，用户再点一次能拉起新浏览器
+            if st.get("state") in ("ok", "expired", "error"):
+                _active.pop(sid, None)
+            return self._send(200, json.dumps(st, ensure_ascii=False))
         return self._send(404, "not found", "text/plain; charset=utf-8")
 
     def do_POST(self):
