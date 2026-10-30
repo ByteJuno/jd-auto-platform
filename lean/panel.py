@@ -395,7 +395,7 @@ async function openCk(){
 
 function closeCk(){ clearTimeout(ckTimer); ckdlg.close(); refresh(); }
 
-const QR_REFRESH_MS = 70000;   // 和服务端 QR_REFRESH_SECONDS 默认值保持一致
+const QR_REFRESH_MS = 100000;  // 和服务端 QR_REFRESH_SECONDS 默认值保持一致
 
 async function pollCk(){
   if(!sid) return;

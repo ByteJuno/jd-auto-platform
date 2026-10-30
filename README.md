@@ -504,3 +504,35 @@ sudo APP_DIR=/opt/jd-cron OWNER=$USER PANEL_BIND=<内网IP> PANEL_PORT=8089 bash
 
 顺带记一个容易误判的现象：首页打开时  可能先返回   且取图 404（qr not ready），
 那是浏览器还在 starting，不是出错——面板会自动重试。
+### 10.7 手机显示"登录成功"但 cookie 没写进来（真机踩到）
+
+现场：手机京东点完确认，手机弹"登录成功"，面板一直停在等扫码，.env 里没账号。
+
+排查第一步是看**浏览器到底有没有收到票**——直接查 chromium 的 cookie 库：
+
+`ash
+python3 - <<'PY'
+import sqlite3
+c = sqlite3.connect('file:/opt/jd-cron/ck_sessions/profile/Default/Cookies?mode=ro', uri=True)
+print(c.execute("select host_key,name from cookies where name in ('pt_key','pt_pin')").fetchall())
+PY
+# -> []  空的
+`
+
+库是空的，说明 pt_key 从来没落到这台浏览器上。原因在"换码"的实现方式：
+
+- 京东扫码登录不是扫码就完事。手机确认后，**PC 那个页面自己要去轮询并收票**
+  （qr.m.jd.com/check → passport.jd.com/uc/qrCodeTicketValidation → Set-Cookie: pt_key）；
+- 老实现换码是 page.goto(LOGIN_URL)，**把旧页面销毁了**。用户扫的如果是旧页面那张码，
+  京东服务端接受了扫码（所以手机显示成功），但收票的 JS 已经随页面一起没了，
+  票就烂在那儿，cookie 永远写不进来。
+
+修法：**旧页面不关**。每张二维码都活在自己的标签页里，换码时开新标签页，只保留最近两张；
+收 cookie 时遍历所有活着的页面（同一个浏览器上下文，哪张被扫都能读到）。顺带加固：
+
+- 拿到 pt_key 后再打一次 me-api.jd.com/.../GetJDUserInfoUnion，etcode=0 才算成功；
+- 页面出现「扫描成功/请在手机确认」时，状态栏直接透出"已扫码，请在手机上点确认"，
+  不用再猜是没扫上还是没确认；
+- 换码 100 秒一次（京东码约 2 分钟有效），两张同时在手，等于给用户 200 秒的窗口；
+- 家宽 DNS 会抖（实测出现过一次 ERR_NAME_NOT_RESOLVED），换码失败重试 3 次，
+  还失败就继续用手里那张、30 秒后再试，绝不因为一次网络抖动把整场会话打死。
